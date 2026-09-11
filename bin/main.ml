@@ -1,44 +1,5 @@
 let mode = Cli.parse ()
 
-let send_all sock value =
-  let bytes = Bytes.of_string value in
-  let rec loop offset =
-    if offset < Bytes.length bytes then
-      let sent = Unix.write sock bytes offset (Bytes.length bytes - offset) in
-      if sent = 0 then failwith "socket closed while sending"
-      else loop (offset + sent)
-  in
-  loop 0
-
-let hex_digit value =
-  if value < 10 then Char.chr (Char.code '0' + value)
-  else Char.chr (Char.code 'a' + value - 10)
-
-let hex_of_bytes bytes =
-  String.init
-    (Bytes.length bytes * 2)
-    (fun index ->
-      let byte = Char.code (Bytes.get bytes (index / 2)) in
-      if index mod 2 = 0 then hex_digit (byte lsr 4)
-      else hex_digit (byte land 0xf))
-
-let byte_of_hex_digit = function
-  | '0' .. '9' as digit -> Char.code digit - Char.code '0'
-  | 'a' .. 'f' as digit -> Char.code digit - Char.code 'a' + 10
-  | 'A' .. 'F' as digit -> Char.code digit - Char.code 'A' + 10
-  | _ -> invalid_arg "Invalid hexadecimal secret"
-
-let bytes_of_hex value =
-  if String.length value mod 2 <> 0 then
-    invalid_arg "Invalid hexadecimal secret"
-  else
-    Bytes.init
-      (String.length value / 2)
-      (fun index ->
-        let high = byte_of_hex_digit value.[index * 2] in
-        let low = byte_of_hex_digit value.[(index * 2) + 1] in
-        Char.chr ((high lsl 4) lor low))
-
 let () =
   match mode with
   | Cli.Help ->
@@ -64,7 +25,8 @@ let () =
               (fun () ->
                 match mode with
                 | Cli.Send path ->
-                    Printf.eprintf "%s\n%!" (Oaks.secret client |> hex_of_bytes);
+                    Printf.eprintf "%s\n%!"
+                      (Oaks.secret client |> Hex.hex_of_bytes);
 
                     let rec accept_loop listen_fd =
                       if Atomic.get stop then ()
@@ -85,33 +47,28 @@ let () =
                                    (fun () ->
                                      match addr with
                                      | Unix.ADDR_INET (ip, port) ->
+                                         Printf.printf
+                                           "connection from %s:%d\n%!"
+                                           (Unix.string_of_inet_addr ip)
+                                           port;
+
                                          let input = open_in path in
                                          let name =
                                            String.split_on_char '/' path
                                            |> List.rev |> List.hd
                                          in
 
+                                         ignore name;
+
                                          Fun.protect
                                            ~finally:(fun () -> close_in input)
                                            (fun () ->
-                                             Printf.printf
-                                               "connection from %s:%d\n%!"
-                                               (Unix.string_of_inet_addr ip)
-                                               port;
-
                                              let key =
                                                Oaks.auth client_fd
                                                  (Oaks.secret client)
                                              in
-                                             Printf.printf "%s\n%!"
-                                               (hex_of_bytes key);
 
-                                             send_all client_fd name;
-
-                                             let len = in_channel_length input in
-                                             seek_in input 0;
-                                             let data = really_input_string input len in
-                                             send_all client_fd data)
+                                             File.send input client_fd key)
                                      | Unix.ADDR_UNIX _ -> ())));
 
                           accept_loop listen_fd
@@ -121,7 +78,7 @@ let () =
 
                     ()
                 | Cli.Recv (raw_secret, path) ->
-                    let secret = bytes_of_hex raw_secret in
+                    let secret = Hex.bytes_of_hex raw_secret in
 
                     let peer = Oaks.discover client secret in
                     let peer_fd = Unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
@@ -131,8 +88,8 @@ let () =
                       (fun () ->
                         Unix.connect peer_fd peer;
                         let key = Oaks.authed peer_fd secret in
-                        Printf.printf "%s\n%!" (hex_of_bytes key));
-                    ignore path
+
+                        File.recv path peer_fd key)
                 | Cli.Help -> ()))
       in
 
@@ -142,4 +99,4 @@ let () =
 
       Atomic.set stop true;
       Domain.join task;
-      ignore (Oaks.stop client discovery_task)
+      Oaks.stop client discovery_task

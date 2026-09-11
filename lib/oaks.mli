@@ -7,3 +7,5 @@ val authed : Unix.file_descr -> Bytes.t -> Bytes.t
 val secret : mdns_client -> Bytes.t
 val id : mdns_client -> string
 val discover : mdns_client -> Bytes.t -> Unix.sockaddr
+val send : Unix.file_descr -> Bytes.t -> unit
+val recv : Unix.file_descr -> int -> Bytes.t
