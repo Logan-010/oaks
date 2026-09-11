@@ -19,6 +19,6 @@
  (name oaks)
  (synopsis "A short synopsis")
  (description "A longer description")
- (depends ocaml dns unix lwt)
+ (depends ocaml dns unix lwt mirage-crypto mirage-crypto-rng digestif)
  (tags
   ("add topics" "to describe" your project)))

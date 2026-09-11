@@ -12,6 +12,12 @@ bug-reports: "https://github.com/username/reponame/issues"
 depends: [
   "dune" {>= "3.23"}
   "ocaml"
+  "dns"
+  "unix"
+  "lwt"
+  "mirage-crypto"
+  "mirage-crypto-rng"
+  "digestif"
   "odoc" {with-doc}
 ]
 build: [

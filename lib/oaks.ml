@@ -28,30 +28,43 @@ let spawn_socket port =
   sock
 
 let create port =
-  Random.self_init ();
+  Mirage_crypto_rng_unix.use_default ();
 
   {
     sock = spawn_socket 5353;
     bytes = Bytes.create 4096;
     stop = Atomic.make false;
     port;
-    secret = Bytes.create 32 |> Bytes.map (fun _ -> Char.chr @@ Random.int 256);
+    secret = Mirage_crypto_rng_unix.getrandom 32 |> Bytes.of_string;
     addrs = StringMap.empty;
     mutex = Mutex.create ();
   }
 
+let id client =
+  client.secret
+  |> Digestif.BLAKE2B.digest_bytes
+  |> Digestif.BLAKE2B.to_hex
+
 let discovery_loop client =
   let buflen = Bytes.length client.bytes in
 
-  let id = Digest.bytes client.secret |> Digest.to_hex in
+  let id = id client in
 
   let peer_name =
-    Domain_name.of_string_exn (Fmt.str "%s.%d._oaks._udp.local" id client.port)
+    Domain_name.of_string_exn "oaks._oaks._udp.local"
   in
 
   let question = Dns.Packet.Question.create peer_name Dns.Rr_map.Txt in
 
-  let packet = Dns.Packet.create (0, Dns.Packet.Flags.empty) question `Query in
+  let txt_records =
+    Dns.Rr_map.Txt_set.of_list [ Fmt.str "id=%s" id; Fmt.str "port=%d" client.port ]
+  in
+  let additional =
+    Dns.Name_rr_map.singleton peer_name Dns.Rr_map.Txt (60l, txt_records)
+  in
+  let packet =
+    Dns.Packet.create ~additional (0, Dns.Packet.Flags.empty) question `Query
+  in
 
   let encoded, _ = Dns.Packet.encode `Udp packet in
   let encoded = Bytes.unsafe_of_string encoded in
@@ -87,23 +100,40 @@ let discovery_loop client =
           let name, _qtype = packet.question in
           let name = Domain_name.to_string name in
 
-          match String.split_on_char '.' name with
-          | peer_id :: port_str :: "_oaks" :: "_udp" :: "local" :: _
-            when peer_id <> id ->
-              begin match (int_of_string_opt port_str, sender) with
-              | Some peer_port, Unix.ADDR_INET (addr, _mdns_port)
-                when peer_port >= 0 && peer_port <= 65535 ->
-                  let peer_addr = Unix.ADDR_INET (addr, peer_port) in
+          if name = Domain_name.to_string peer_name then
+            match
+              Dns.Name_rr_map.find peer_name Dns.Rr_map.Txt packet.additional
+            with
+            | Some (_ttl, records) ->
+                let records = Dns.Rr_map.Txt_set.elements records in
+                let value prefix =
+                  List.find_map
+                    (fun record ->
+                      if String.starts_with ~prefix record then
+                        Some (String.sub record (String.length prefix)
+                                (String.length record - String.length prefix))
+                      else None)
+                    records
+                in
+                begin match value "id=", value "port=", sender with
+                | Some peer_id, Some port_str,
+                  Unix.ADDR_INET (addr, _mdns_port)
+                  when peer_id <> id ->
+                    begin match int_of_string_opt port_str with
+                    | Some peer_port when peer_port >= 0 && peer_port <= 65535 ->
+                        let peer_addr = Unix.ADDR_INET (addr, peer_port) in
 
-                  Fmt.pr "discovered peer %s at %s:%d@." peer_id
-                    (Unix.string_of_inet_addr addr)
-                    peer_port;
+                        Fmt.pr "discovered peer %s at %s:%d@." peer_id
+                          (Unix.string_of_inet_addr addr) peer_port;
 
-                  Mutex.protect client.mutex @@ fun _ ->
-                  client.addrs <- StringMap.add peer_id peer_addr client.addrs
-              | _ -> ()
-              end
-          | _ -> ())
+                        Mutex.protect client.mutex @@ fun _ ->
+                        client.addrs <- StringMap.add peer_id peer_addr client.addrs
+                    | _ -> ()
+                    end
+                | _ -> ()
+                end
+            | None -> ()
+          else ())
     end
   done
 
@@ -115,10 +145,53 @@ let stop client task =
 
 let secret client = client.secret
 
-let discover client id =
+let discover client secret =
+  
+  let id =
+    secret
+    |> Digestif.BLAKE2B.digest_bytes
+    |> Digestif.BLAKE2B.to_hex in
+  
   let rec loop () =
     try Mutex.protect client.mutex @@ fun _ -> StringMap.find id client.addrs
     with Not_found -> loop ()
   in
 
   loop ()
+
+let send sock bytes =
+  let rec loop offset =
+    if offset < Bytes.length bytes then begin
+      let sent = Unix.write sock bytes offset (Bytes.length bytes - offset) in
+      if sent = 0 then failwith "socket closed while sending";
+      loop (offset + sent)
+    end
+  in
+  loop 0
+
+let recv sock len =
+  let buf = Bytes.create len in
+
+  let rec loop offset =
+    if offset = len then buf
+    else
+      let n = Unix.read sock buf offset (len - offset) in
+      if n = 0 then failwith "socket closed before receiving expected data"
+      else loop (offset + n)
+  in
+
+  loop 0
+
+let auth sock secret =
+  let nonce = Mirage_crypto_rng_unix.getrandom 32 |> Bytes.of_string in
+
+  send sock nonce;
+
+  Bytes.cat nonce secret |> Digestif.BLAKE2B.digest_bytes
+  |> Digestif.BLAKE2B.to_raw_string |> Bytes.of_string
+
+let authed sock secret =
+  let nonce = recv sock 32 in
+
+  Bytes.cat nonce secret |> Digestif.BLAKE2B.digest_bytes
+  |> Digestif.BLAKE2B.to_raw_string |> Bytes.of_string

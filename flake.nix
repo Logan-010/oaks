@@ -34,6 +34,9 @@
           propagatedBuildInputs = with ocamlPackages; [
             dns
             lwt
+            mirage-crypto
+            mirage-crypto-rng
+            digestif
           ];
 
           # Libraries needed at compile-time
@@ -57,6 +60,9 @@
 
             ocamlPackages.dns
             ocamlPackages.lwt
+            ocamlPackages.mirage-crypto
+            ocamlPackages.mirage-crypto-rng
+            ocamlPackages.digestif
           ];
         };
       }
