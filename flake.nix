@@ -1,5 +1,5 @@
 {
-  description = "OCaml Flake";
+  description = "Oaks Flake";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -23,7 +23,7 @@
       in
       {
         packages.default = ocamlPackages.buildDunePackage {
-          pname = "app";
+          pname = "oaks";
           version = "0.1.0";
 
           src = ./.;
