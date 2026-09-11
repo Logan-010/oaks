@@ -1,7 +1,13 @@
+module StringMap = Map.Make (String)
+
 type mdns_client = {
   sock : Unix.file_descr;
   bytes : Bytes.t;
   stop : bool Atomic.t;
+  port : int;
+  secret : Bytes.t;
+  mutable addrs : Unix.sockaddr StringMap.t;
+  mutex : Mutex.t;
 }
 
 let mdns_addr = Unix.inet_addr_of_string "224.0.0.251"
@@ -14,33 +20,91 @@ let spawn_socket port =
 
   Unix.bind sock (Unix.ADDR_INET (Unix.inet_addr_any, port));
 
-  Lwt_unix.mcast_add_membership
-    (Lwt_unix.of_unix_file_descr ~blocking:true sock)
-    mdns_addr;
+  let lwt_sock = Lwt_unix.of_unix_file_descr ~blocking:true sock in
+
+  Lwt_unix.mcast_add_membership lwt_sock mdns_addr;
+  Lwt_unix.mcast_set_loop lwt_sock true;
 
   sock
 
-let default_client () =
+let create port =
+  Random.self_init ();
+
   {
     sock = spawn_socket 5353;
     bytes = Bytes.create 4096;
     stop = Atomic.make false;
+    port;
+    secret = Bytes.create 32 |> Bytes.map (fun _ -> Char.chr @@ Random.int 256);
+    addrs = StringMap.empty;
+    mutex = Mutex.create ();
   }
 
 let discovery_loop client =
   let buflen = Bytes.length client.bytes in
 
+  let id = Digest.bytes client.secret |> Digest.to_hex in
+
+  let peer_name =
+    Domain_name.of_string_exn (Fmt.str "%s.%d._oaks._udp.local" id client.port)
+  in
+
+  let question = Dns.Packet.Question.create peer_name Dns.Rr_map.Txt in
+
+  let packet = Dns.Packet.create (0, Dns.Packet.Flags.empty) question `Query in
+
+  let encoded, _ = Dns.Packet.encode `Udp packet in
+  let encoded = Bytes.unsafe_of_string encoded in
+
+  let mdns_target = Unix.ADDR_INET (mdns_addr, 5353) in
+
+  let send_beacon () =
+    ignore
+      (Unix.sendto client.sock encoded 0 (Bytes.length encoded) [] mdns_target)
+  in
+
+  let last_send = ref neg_infinity in
+  let interval = 3.0 in
+
   while not (Atomic.get client.stop) do
+    let now = Unix.gettimeofday () in
+
+    if now -. !last_send >= interval then begin
+      send_beacon ();
+      last_send := now
+    end;
+
     let readable, _, _ = Unix.select [ client.sock ] [] [] 0.25 in
 
-    if readable <> [] then
-      let len, _sender = Unix.recvfrom client.sock client.bytes 0 buflen [] in
+    if readable <> [] then begin
+      let len, sender = Unix.recvfrom client.sock client.bytes 0 buflen [] in
 
-      match
-        Dns.Packet.decode (String.of_bytes (Bytes.sub client.bytes 0 len))
-      with
-      | Ok _p -> print_endline "got packet!"
+      let data = Bytes.sub_string client.bytes 0 len in
+
+      match Dns.Packet.decode data with
       | Error e -> Fmt.epr "%a@." Dns.Packet.pp_err e
+      | Ok packet -> (
+          let name, _qtype = packet.question in
+          let name = Domain_name.to_string name in
+
+          match String.split_on_char '.' name with
+          | peer_id :: port_str :: "_oaks" :: "_udp" :: "local" :: _
+            when peer_id <> id ->
+              begin match (int_of_string_opt port_str, sender) with
+              | Some peer_port, Unix.ADDR_INET (addr, _mdns_port)
+                when peer_port >= 0 && peer_port <= 65535 ->
+                  let peer_addr = Unix.ADDR_INET (addr, peer_port) in
+
+                  Fmt.pr "discovered peer %s at %s:%d@." peer_id
+                    (Unix.string_of_inet_addr addr)
+                    peer_port;
+
+                  Mutex.protect client.mutex @@ fun _ ->
+                  client.addrs <- StringMap.add peer_id peer_addr client.addrs
+              | _ -> ()
+              end
+          | _ -> ())
+    end
   done
 
 let start client = Domain.spawn (fun _ -> discovery_loop client)
@@ -48,3 +112,13 @@ let start client = Domain.spawn (fun _ -> discovery_loop client)
 let stop client task =
   Atomic.set client.stop true;
   Domain.join task
+
+let secret client = client.secret
+
+let discover client id =
+  let rec loop () =
+    try Mutex.protect client.mutex @@ fun _ -> StringMap.find id client.addrs
+    with Not_found -> loop ()
+  in
+
+  loop ()
