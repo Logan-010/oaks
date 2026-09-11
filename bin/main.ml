@@ -1,14 +1,19 @@
-let client = Oaks.create 1212
-let stop = Atomic.make false
+let mode = Cli.parse ()
 
 let () =
-  ignore @@ Sys.signal Sys.sigint
-  @@ Sys.Signal_handle (fun _ -> Atomic.set stop true);
+  match mode with
+  | Cli.Help -> prerr_endline Cli.help
+  | _ ->
+      let client = Oaks.create 1212 in
+      let stop = Atomic.make false in
 
-  let task = Oaks.start client in
+      ignore @@ Sys.signal Sys.sigint
+      @@ Sys.Signal_handle (fun _ -> Atomic.set stop true);
 
-  while not @@ Atomic.get stop do
-    ()
-  done;
+      let task = Oaks.start client in
 
-  Oaks.stop client task
+      while not @@ Atomic.get stop do
+        ()
+      done;
+
+      Oaks.stop client task
