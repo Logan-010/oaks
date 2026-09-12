@@ -25,8 +25,9 @@ let () =
               (fun () ->
                 match mode with
                 | Cli.Send path ->
-                    Printf.eprintf "%s\n%!"
+                    Printf.eprintf "Using secret \"%s\"\n"
                       (Oaks.secret client |> Hex.hex_of_bytes);
+                    flush stderr;
 
                     let rec accept_loop listen_fd =
                       if Atomic.get stop then ()
@@ -47,10 +48,11 @@ let () =
                                    (fun () ->
                                      match addr with
                                      | Unix.ADDR_INET (ip, port) ->
-                                         Printf.printf
-                                           "connection from %s:%d\n%!"
+                                         Printf.eprintf
+                                           "Connection from \"%s:%d\n\""
                                            (Unix.string_of_inet_addr ip)
                                            port;
+                                         flush stderr;
 
                                          let key =
                                            Oaks.auth client_fd
