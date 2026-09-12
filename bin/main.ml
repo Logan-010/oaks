@@ -8,7 +8,8 @@ let () =
   | _ ->
       let net = Net.create 0 in
       Unix.set_nonblock net;
-      let client = Oaks.create @@ Net.used_port net in
+      let secret = Code.secret 5 Code.words in
+      let client = Oaks.create secret @@ Net.used_port net in
       let discovery_task = Oaks.start client in
 
       let stop = Atomic.make false in
@@ -25,8 +26,7 @@ let () =
               (fun () ->
                 match mode with
                 | Cli.Send path ->
-                    Printf.eprintf "Using secret \"%s\"\n"
-                      (Oaks.secret client |> Hex.hex_of_bytes);
+                    Printf.eprintf "Using secret \"%s\"\n" secret;
                     flush stderr;
 
                     let rec accept_loop listen_fd =
@@ -56,7 +56,7 @@ let () =
 
                                          let key =
                                            Oaks.auth client_fd
-                                             (Oaks.secret client)
+                                           @@ Bytes.of_string secret
                                          in
 
                                          File.send path client_fd key
@@ -69,7 +69,7 @@ let () =
 
                     ()
                 | Cli.Recv (raw_secret, path) ->
-                    let secret = Hex.bytes_of_hex raw_secret in
+                    let secret = Bytes.of_string raw_secret in
 
                     prerr_string "Finding peers.\n";
                     flush stderr;

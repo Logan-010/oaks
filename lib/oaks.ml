@@ -27,7 +27,7 @@ let spawn_socket port =
 
   sock
 
-let create port =
+let create secret port =
   Mirage_crypto_rng_unix.use_default ();
 
   {
@@ -35,7 +35,7 @@ let create port =
     bytes = Bytes.create 4096;
     stop = Atomic.make false;
     port;
-    secret = Mirage_crypto_rng_unix.getrandom 32 |> Bytes.of_string;
+    secret = Bytes.of_string secret;
     addrs = StringMap.empty;
     mutex = Mutex.create ();
   }
@@ -121,7 +121,7 @@ let discovery_loop client =
                       ->
                         let peer_addr = Unix.ADDR_INET (addr, peer_port) in
 
-                        Fmt.pr "discovered peer %s at %s:%d@." peer_id
+                        Fmt.pr "Discovered peer %s at %s:%d@." peer_id
                           (Unix.string_of_inet_addr addr)
                           peer_port;
 
@@ -142,8 +142,6 @@ let start client = Domain.spawn (fun _ -> discovery_loop client)
 let stop client task =
   Atomic.set client.stop true;
   Domain.join task
-
-let secret client = client.secret
 
 let auth_key nonce secret =
   Bytes.cat nonce secret |> Bytes.to_string |> Digest.BLAKE256.string

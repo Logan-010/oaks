@@ -5,20 +5,18 @@
 (generate_opam_files true)
 
 (source
- (github username/reponame))
+ (github logan-010/oaks))
 
-(authors "Author Name <author@example.com>")
+(authors "Logan B")
 
-(maintainers "Maintainer Name <maintainer@example.com>")
+(maintainers "Logan B")
 
-(license LICENSE)
-
-(documentation https://url/to/documentation)
+(license MIT)
 
 (package
  (name oaks)
- (synopsis "A short synopsis")
- (description "A longer description")
+ (synopsis "LAN file share.")
+ (description "A simple and secure LAN file sharing program.")
  (depends ocaml dns unix lwt mirage-crypto mirage-crypto-rng)
  (tags
-  ("add topics" "to describe" your project)))
+  ("mDNS" "share" "cryptography")))
