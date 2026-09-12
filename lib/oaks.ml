@@ -41,23 +41,20 @@ let create port =
   }
 
 let id client =
-  client.secret
-  |> Digestif.BLAKE2B.digest_bytes
-  |> Digestif.BLAKE2B.to_hex
+  client.secret |> Digestif.BLAKE2B.digest_bytes |> Digestif.BLAKE2B.to_hex
 
 let discovery_loop client =
   let buflen = Bytes.length client.bytes in
 
   let id = id client in
 
-  let peer_name =
-    Domain_name.of_string_exn "oaks._oaks._udp.local"
-  in
+  let peer_name = Domain_name.of_string_exn "oaks._oaks._udp.local" in
 
   let question = Dns.Packet.Question.create peer_name Dns.Rr_map.Txt in
 
   let txt_records =
-    Dns.Rr_map.Txt_set.of_list [ Fmt.str "id=%s" id; Fmt.str "port=%d" client.port ]
+    Dns.Rr_map.Txt_set.of_list
+      [ Fmt.str "id=%s" id; Fmt.str "port=%d" client.port ]
   in
   let additional =
     Dns.Name_rr_map.singleton peer_name Dns.Rr_map.Txt (60l, txt_records)
@@ -96,7 +93,7 @@ let discovery_loop client =
 
       match Dns.Packet.decode data with
       | Error e -> Fmt.epr "%a@." Dns.Packet.pp_err e
-      | Ok packet -> (
+      | Ok packet ->
           let name, _qtype = packet.question in
           let name = Domain_name.to_string name in
 
@@ -110,30 +107,33 @@ let discovery_loop client =
                   List.find_map
                     (fun record ->
                       if String.starts_with ~prefix record then
-                        Some (String.sub record (String.length prefix)
-                                (String.length record - String.length prefix))
+                        Some
+                          (String.sub record (String.length prefix)
+                             (String.length record - String.length prefix))
                       else None)
                     records
                 in
-                begin match value "id=", value "port=", sender with
-                | Some peer_id, Some port_str,
-                  Unix.ADDR_INET (addr, _mdns_port)
+                begin match (value "id=", value "port=", sender) with
+                | Some peer_id, Some port_str, Unix.ADDR_INET (addr, _mdns_port)
                   when peer_id <> id ->
                     begin match int_of_string_opt port_str with
-                    | Some peer_port when peer_port >= 0 && peer_port <= 65535 ->
+                    | Some peer_port when peer_port >= 0 && peer_port <= 65535
+                      ->
                         let peer_addr = Unix.ADDR_INET (addr, peer_port) in
 
                         Fmt.pr "discovered peer %s at %s:%d@." peer_id
-                          (Unix.string_of_inet_addr addr) peer_port;
+                          (Unix.string_of_inet_addr addr)
+                          peer_port;
 
                         Mutex.protect client.mutex @@ fun _ ->
-                        client.addrs <- StringMap.add peer_id peer_addr client.addrs
+                        client.addrs <-
+                          StringMap.add peer_id peer_addr client.addrs
                     | _ -> ()
                     end
                 | _ -> ()
                 end
             | None -> ()
-          else ())
+          else ()
     end
   done
 
@@ -145,13 +145,13 @@ let stop client task =
 
 let secret client = client.secret
 
+let auth_key nonce secret =
+  Bytes.cat nonce secret |> Bytes.to_string |> Digest.BLAKE256.string
+  |> Bytes.of_string
+
 let discover client secret =
-  
-  let id =
-    secret
-    |> Digestif.BLAKE2B.digest_bytes
-    |> Digestif.BLAKE2B.to_hex in
-  
+  let id = secret |> Digestif.BLAKE2B.digest_bytes |> Digestif.BLAKE2B.to_hex in
+
   let rec loop () =
     try Mutex.protect client.mutex @@ fun _ -> StringMap.find id client.addrs
     with Not_found -> loop ()
@@ -187,11 +187,8 @@ let auth sock secret =
 
   send sock nonce;
 
-  Bytes.cat nonce secret |> Digestif.BLAKE2B.digest_bytes
-  |> Digestif.BLAKE2B.to_raw_string |> Bytes.of_string
+  auth_key nonce secret
 
 let authed sock secret =
   let nonce = recv sock 32 in
-
-  Bytes.cat nonce secret |> Digestif.BLAKE2B.digest_bytes
-  |> Digestif.BLAKE2B.to_raw_string |> Bytes.of_string
+  auth_key nonce secret

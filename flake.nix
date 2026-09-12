@@ -36,7 +36,6 @@
             lwt
             mirage-crypto
             mirage-crypto-rng
-            digestif
           ];
 
           # Libraries needed at compile-time
@@ -62,7 +61,6 @@
             ocamlPackages.lwt
             ocamlPackages.mirage-crypto
             ocamlPackages.mirage-crypto-rng
-            ocamlPackages.digestif
           ];
         };
       }

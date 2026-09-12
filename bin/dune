@@ -1,4 +1,4 @@
 (executable
  (public_name oaks)
  (name main)
- (libraries oaks mirage-crypto digestif))
+ (libraries oaks mirage-crypto))

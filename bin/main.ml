@@ -52,23 +52,12 @@ let () =
                                            (Unix.string_of_inet_addr ip)
                                            port;
 
-                                         let input = open_in path in
-                                         let name =
-                                           String.split_on_char '/' path
-                                           |> List.rev |> List.hd
+                                         let key =
+                                           Oaks.auth client_fd
+                                             (Oaks.secret client)
                                          in
 
-                                         ignore name;
-
-                                         Fun.protect
-                                           ~finally:(fun () -> close_in input)
-                                           (fun () ->
-                                             let key =
-                                               Oaks.auth client_fd
-                                                 (Oaks.secret client)
-                                             in
-
-                                             File.send input client_fd key)
+                                         File.send path client_fd key
                                      | Unix.ADDR_UNIX _ -> ())));
 
                           accept_loop listen_fd
@@ -80,14 +69,27 @@ let () =
                 | Cli.Recv (raw_secret, path) ->
                     let secret = Hex.bytes_of_hex raw_secret in
 
+                    prerr_string "Finding peers.\n";
+                    flush stderr;
+
                     let peer = Oaks.discover client secret in
+
+                    prerr_string "Connecting.\n";
+                    flush stderr;
+
                     let peer_fd = Unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
+                    Unix.connect peer_fd peer;
+
+                    prerr_string "Performing handshake.\n";
+                    flush stderr;
 
                     Fun.protect
                       ~finally:(fun () -> Unix.close peer_fd)
                       (fun () ->
-                        Unix.connect peer_fd peer;
                         let key = Oaks.authed peer_fd secret in
+
+                        prerr_string "Starting transfer.\n";
+                        flush stderr;
 
                         File.recv path peer_fd key)
                 | Cli.Help -> ()))
