@@ -1,14 +1,22 @@
-let mode = Cli.parse ()
+let cli = Cli.parse ()
 
 let () =
-  match mode with
+  match cli.mode with
   | Cli.Help ->
       prerr_string Cli.help;
       exit 0
   | _ ->
-      let net = Net.create 0 in
+      let secret =
+        let f = function Some s -> s | None -> Code.secret 5 Code.words in
+
+        match cli.mode with
+        | Cli.Send (_, secret_opt) -> f secret_opt
+        | Cli.Recv (secret, _) -> secret
+        | _ -> invalid_arg "Unreachable"
+      in
+
+      let net = Net.create cli.interface cli.port in
       Unix.set_nonblock net;
-      let secret = Code.secret 5 Code.words in
       let client = Oaks.create secret @@ Net.used_port net in
       let discovery_task = Oaks.start client in
 
@@ -24,8 +32,8 @@ let () =
             Fun.protect
               ~finally:(fun () -> Atomic.set is_done true)
               (fun () ->
-                match mode with
-                | Cli.Send path ->
+                match cli.mode with
+                | Cli.Send (path, _) ->
                     Printf.eprintf "Using secret \"%s\"\n" secret;
                     flush stderr;
 

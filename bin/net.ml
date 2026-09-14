@@ -1,7 +1,7 @@
-let create port =
+let create interface port =
   let sock = Unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
 
-  Unix.bind sock (Unix.ADDR_INET (Unix.inet_addr_any, port));
+  Unix.bind sock (Unix.ADDR_INET (Unix.inet_addr_of_string interface, port));
   Unix.listen sock 16;
 
   sock
